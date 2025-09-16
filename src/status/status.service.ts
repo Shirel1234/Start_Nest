@@ -1,59 +1,72 @@
-import { Injectable, Logger } from '@nestjs/common';
+// src/status/status.service.ts
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { UpdateStatusDto } from './dto/update.dto';
+import axios from 'axios';
 
 @Injectable()
 export class StatusService {
-  private readonly logger = new Logger(StatusService.name);
+  constructor(private prismaStatusService: PrismaService) {}
 
-  constructor(private readonly prisma: PrismaService) {}
+  // GET /status
+  async checkStatus() {
+    try {
+      await this.prismaStatusService.$queryRaw`SELECT 1`;
+      return { status: 'ok' };
+    } catch {
+      throw new BadRequestException('Database not reachable');
+    }
+  }
 
-  async checkDb(): Promise<boolean> {
-    const maxRetries = 2;
-    const timeoutMs = 2000;
+  // POST /update
+  async updateStatus(data: UpdateStatusDto) {
+    if (new Date(data.create_date) > new Date()) {
+      throw new BadRequestException('create_date cannot be in the future');
+    }
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const existing = await this.prismaStatusService.record.findUnique({
+      where: { id: data.id },
+    });
+    const mappedData = {
+      name: data.name,
+      create_date: new Date(data.create_date),
+      locationLat: data.location.latitude,
+      locationLon: data.location.longitude,
+      alerts: data.alerts,
+      status: data.status,
+      description: data.description,
+    };
+    if (existing) {
+      await this.prismaStatusService.record.update({
+        where: { id: data.id },
+        data: mappedData,
+      });
+    } else {
+      await this.prismaStatusService.record.create({ data: mappedData });
+    }
+
+    const israelDate = new Date(data.create_date).toLocaleString('en-IL', {
+      timeZone: 'Asia/Jerusalem',
+    });
+
+    const payloads = data.alerts.map((alert) => ({
+      ...data,
+      create_date: israelDate,
+      alert,
+    }));
+
+    for (const payload of payloads) {
       try {
-        this.logger.log(`DB ping attempt ${attempt + 1}`);
-
-        await Promise.race([
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-          await this.prisma.$queryRaw`SELECT 1`,
-          new Promise((_res, rej) =>
-            setTimeout(() => rej(new Error('DB ping timeout')), timeoutMs),
-          ),
-        ]);
-
-        this.logger.log('DB ping succeeded');
-        return true;
+        await axios.post('https://httpbin.org/post', payload);
       } catch (err: unknown) {
         if (err instanceof Error) {
-          this.logger.warn(
-            `DB ping failed (attempt ${attempt + 1}): ${err?.message ?? err}`,
-          );
-
-          if (attempt === maxRetries) {
-            this.logger.error(
-              'Database unavailable after retries',
-              (err && err.stack) ?? String(err),
-            );
-            return false;
-          }
+          console.error('Error sending alert', payload.alert, err.message);
         } else {
-          const errStr = JSON.stringify(err);
-          this.logger.warn(
-            `DB ping failed (attempt ${attempt + 1}): ${errStr}`,
-          );
-          if (attempt === maxRetries) {
-            this.logger.error('Database unavailable after retries', errStr);
-            return false;
-          }
+          console.error('Error sending alert', payload.alert, err);
         }
-
-        const backoffMs = 300 * (attempt + 1);
-        await new Promise((res) => setTimeout(res, backoffMs));
       }
     }
 
-    return false;
+    return { success: true };
   }
 }
