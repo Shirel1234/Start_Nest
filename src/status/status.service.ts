@@ -1,14 +1,15 @@
 // src/status/status.service.ts
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateStatusDto } from './dto/update.dto';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import axios from 'axios';
 
 @Injectable()
 export class StatusService {
+  private readonly logger = new Logger(StatusService.name);
   constructor(private prismaStatusService: PrismaService) {}
 
-  // GET /status
   async checkStatus() {
     try {
       await this.prismaStatusService.$queryRaw`SELECT 1`;
@@ -18,7 +19,6 @@ export class StatusService {
     }
   }
 
-  // POST /update
   async updateStatus(data: UpdateStatusDto) {
     if (new Date(data.create_date) > new Date()) {
       throw new BadRequestException('create_date cannot be in the future');
@@ -68,5 +68,35 @@ export class StatusService {
     }
 
     return { success: true };
+  }
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleStatusCron() {
+    this.logger.log('Running status cron job...');
+
+    const now = new Date();
+
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    await this.prismaStatusService.record.updateMany({
+      where: {
+        status: 1,
+        create_date: { lt: oneHourAgo },
+      },
+      data: {
+        status: 2,
+      },
+    });
+
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    await this.prismaStatusService.record.updateMany({
+      where: {
+        create_date: { lt: oneDayAgo },
+      },
+      data: {
+        status: 5,
+      },
+    });
+
+    this.logger.log('Status cron job finished.');
   }
 }
