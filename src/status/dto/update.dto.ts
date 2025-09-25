@@ -1,9 +1,6 @@
 import { z } from 'zod';
 import { ApiProperty } from '@nestjs/swagger';
 
-/**
- * Zod schema - validation runtime
- */
 export const updateStatusSchema = z.object({
   id: z.number(),
   name: z.string().regex(/^[a-zA-Z0-9 ]+$/, 'Name must be alphanumeric'),
@@ -16,7 +13,6 @@ export const updateStatusSchema = z.object({
   status: z.number().min(1).max(6),
   description: z.string(),
 });
-
 export type UpdateStatusDto = z.infer<typeof updateStatusSchema>;
 
 export class UpdateStatusDtoSwagger {
